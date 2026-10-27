@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ARES Sumo Tuner</title>
+<style>
+  :root {
+    --bg:#12161a; --panel:#1b2127; --line:#2c353d; --text:#e9eef1; --muted:#8d9aa5;
+    --accent:#4cc9f0; --go:#3ddc84; --stop:#ff5d5d; --warn:#ffb84c;
+    color-scheme: dark;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--text);
+    font-family:"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; }
+  body { padding:max(12px,env(safe-area-inset-top)) 12px max(24px,env(safe-area-inset-bottom)); max-width:560px; margin:0 auto; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  h1 { font-size:20px; margin:0; font-weight:700; }
+  h2 { font-size:15px; margin:0 0 10px; font-weight:600; }
+  .status { display:flex; align-items:center; gap:8px; font-size:14px; color:var(--muted); }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--stop); }
+  .dot.on { background:var(--go); }
+  button { font:inherit; color:var(--text); border:1px solid var(--line); background:var(--panel);
+    border-radius:10px; min-height:48px; padding:0 16px; cursor:pointer; }
+  button:active { transform:scale(.97); }
+  button:focus-visible,input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  button:disabled { opacity:.45; cursor:default; }
+  #connectBtn { width:100%; background:var(--accent); color:#05222c; border:none; font-weight:700; font-size:17px; margin-bottom:12px; }
+  #connectBtn.on { background:var(--panel); color:var(--text); border:1px solid var(--line); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .row > * { flex:1; }
+  .seg button { border-radius:0; }
+  .seg button:first-child { border-radius:10px 0 0 10px; }
+  .seg button:last-child { border-radius:0 10px 10px 0; border-left:0; }
+  .seg button.sel { background:var(--accent); color:#05222c; font-weight:700; border-color:var(--accent); }
+  .big { font-size:26px; font-weight:700; text-align:center; padding:10px; border-radius:10px; background:#0f1317; border:1px solid var(--line); }
+  .big.hi { color:var(--go); } .big.lo { color:var(--muted); }
+  .muted { color:var(--muted); font-size:13px; margin:8px 0 0; line-height:1.4; }
+  .stat { font-variant-numeric:tabular-nums; }
+  .bar { position:relative; height:22px; background:#0f1317; border:1px solid var(--line); border-radius:6px; margin:4px 0 12px; overflow:hidden; }
+  .bar .fill { position:absolute; inset:0 auto 0 0; background:var(--go); width:0; }
+  .bar.edge .fill { background:var(--stop); }
+  .bar .th { position:absolute; top:0; bottom:0; width:2px; background:var(--warn); }
+  .lbl { display:flex; justify-content:space-between; font-size:14px; }
+  canvas { width:100%; height:110px; background:#0f1317; border:1px solid var(--line); border-radius:8px; display:block; }
+  .gain { margin-bottom:14px; }
+  .gain .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .gain input[type=number] { width:96px; min-height:40px; background:#0f1317; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:0 10px; font:inherit; text-align:right; }
+  input[type=range] { width:100%; accent-color:var(--accent); height:32px; }
+  .ir { display:flex; gap:8px; }
+  .ir span { flex:1; text-align:center; padding:8px 0; border-radius:8px; background:#0f1317; border:1px solid var(--line); font-size:13px; color:var(--muted); }
+  .ir span.hit { background:var(--go); color:#05222c; font-weight:700; border-color:var(--go); }
+  #msg { color:var(--warn); font-size:13px; min-height:18px; margin-bottom:8px; }
+  .danger { background:var(--stop); border-color:var(--stop); color:#2a0707; font-weight:700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ARES Sumo Tuner</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="stateTxt">Disconnected</span></div>
+</header>
+
+<button id="connectBtn">Connect to robot</button>
+<div id="msg"></div>
+
+<section class="panel">
+  <h2>Start mode</h2>
+  <div class="row seg" id="modeSeg">
+    <button data-m="1">Start module (J13)</button>
+    <button data-m="0">No module, 5 s auto</button>
+  </div>
+  <p class="muted" id="modeHelp">Connect to the robot to change the mode. Switching mode always stops the robot first.</p>
+  <div class="row" style="margin-top:10px">
+    <button id="armBtn">Start 5 s countdown</button>
+    <button id="stopBtn" class="danger">Stop</button>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Start module signal (IO9)</h2>
+  <div class="big lo" id="startSig">–</div>
+  <p class="muted stat">Edges seen: <b id="edges">0</b> · <span id="sigNote">No data yet.</span></p>
+  <canvas id="startCv" height="40" style="height:40px;margin-top:8px"></canvas>
+</section>
+
+<section class="panel">
+  <h2>Line sensors</h2>
+  <div class="lbl"><span>Left (IO1)</span><b class="stat" id="lvL">–</b></div>
+  <div class="bar" id="barL"><div class="fill"></div><div class="th"></div></div>
+  <div class="lbl"><span>Right (IO2)</span><b class="stat" id="lvR">–</b></div>
+  <div class="bar" id="barR"><div class="fill"></div><div class="th"></div></div>
+  <canvas id="lineCv"></canvas>
+  <p class="muted">Orange line is the threshold. A reading below it counts as the white edge (bar turns red).</p>
+  <div class="gain" style="margin-top:12px">
+    <div class="head"><span>Threshold</span><input type="number" id="th" min="0" max="4095" step="10" value="3200"></div>
+    <input type="range" id="thR" min="0" max="4095" step="10" value="3200">
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Opponent sensors</h2>
+  <div class="ir" id="ir"><span>L</span><span>FL</span><span>C</span><span>FR</span><span>R</span></div>
+  <p class="muted">Robot state: <b id="rstate">–</b> <span id="cd"></span></p>
+</section>
+
+<section class="panel">
+  <h2>PID gains</h2>
+  <div class="gain" data-k="KP" data-min="0" data-max="6" data-step="0.01"></div>
+  <div class="gain" data-k="KD" data-min="0" data-max="2" data-step="0.01"></div>
+  <div class="gain" data-k="KI" data-min="0" data-max="0.5" data-step="0.001"></div>
+  <p class="muted">Changes are sent when you release the slider or press Enter, and saved on the robot.</p>
+</section>
+
+<script>
+const SVC='6e400001-b5a3-f393-e0a9-e50e24dcca9e', RXU='6e400002-b5a3-f393-e0a9-e50e24dcca9e', TXU='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const STATES=['STANDBY','GAMBIT','EVADE REVERSE','EVADE TURN','COMBAT'];
+const $=id=>document.getElementById(id);
+let dev=null, rx=null, buf='', q=Promise.resolve(), sigSeen=false, mod=null;
+const hist={L:[],R:[],S:[]}, N=120;
+
+function msg(t){ $('msg').textContent=t||''; }
+function send(s){ if(!rx) return; q=q.then(()=>rx.writeValue(new TextEncoder().encode(s))).catch(e=>msg('Send failed: '+e.message)); }
+function setConn(on){
+  $('dot').classList.toggle('on',on); $('stateTxt').textContent=on?'Connected':'Disconnected';
+  $('connectBtn').textContent=on?'Disconnect':'Connect to robot'; $('connectBtn').classList.toggle('on',on);
+  document.querySelectorAll('#modeSeg button,#armBtn,#stopBtn').forEach(b=>b.disabled=!on);
+}
+setConn(false);
+
+async function connect(){
+  if(dev && dev.gatt.connected){ dev.gatt.disconnect(); return; }
+  if(!navigator.bluetooth){ msg('Web Bluetooth is not supported here. Use Chrome on Android (or Bluefy on iOS) over HTTPS.'); return; }
+  try{
+    msg('');
+    dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:'ARES'}],optionalServices:[SVC]});
+    dev.addEventListener('gattserverdisconnected',()=>{ setConn(false); rx=null; });
+    const srv=await dev.gatt.connect(), svc=await srv.getPrimaryService(SVC);
+    rx=await svc.getCharacteristic(RXU);
+    const tx=await svc.getCharacteristic(TXU);
+    tx.addEventListener('characteristicvaluechanged',e=>onData(new TextDecoder().decode(e.target.value)));
+    await tx.startNotifications();
+    setConn(true); send('GET');
+  }catch(e){ setConn(false); msg('Could not connect: '+e.message); }
+}
+$('connectBtn').onclick=connect;
+
+function onData(t){
+  buf+=t; let i;
+  while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i).trim(); buf=buf.slice(i+1); if(line) parse(line.split(',')); }
+}
+function parse(p){
+  if(p[0]==='C'){
+    setGain('KP',p[1]); setGain('KD',p[2]); setGain('KI',p[3]);
+    setTh(+p[4]); setMode(+p[5]);
+  } else if(p[0]==='T'){
+    const [ ,st,l,r,th,s,mask,edges,m,cd ]=p.map(Number);
+    $('rstate').textContent=STATES[st]||st;
+    $('cd').textContent=cd>=0?'· starts in '+(cd/1000).toFixed(1)+' s':'';
+    $('lvL').textContent=l; $('lvR').textContent=r;
+    drawBar('barL',l,th); drawBar('barR',r,th);
+    const sg=$('startSig'); sg.textContent=s?'HIGH (1)':'LOW (0)'; sg.className='big '+(s?'hi':'lo');
+    $('edges').textContent=edges;
+    if(s||edges>0) sigSeen=true;
+    $('sigNote').textContent=sigSeen?'Signal activity detected on the pin.':'No activity yet: module not connected or not started.';
+    [...$('ir').children].forEach((el,i)=>el.classList.toggle('hit',!!(mask&(16>>i))));
+    if(m!==mod) setMode(m);
+    push(hist.L,l); push(hist.R,r); push(hist.S,s); drawLine(th); drawStart();
+  }
+}
+const push=(a,v)=>{ a.push(v); if(a.length>N) a.shift(); };
+function drawBar(id,v,th){
+  const b=$(id); b.querySelector('.fill').style.width=(v/4095*100)+'%';
+  b.querySelector('.th').style.left=(th/4095*100)+'%'; b.classList.toggle('edge',v<th);
+}
+function setMode(m){
+  mod=m; document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('sel',+b.dataset.m===m));
+  $('armBtn').style.display=m?'none':''; $('stopBtn').style.flex=m?'1':'';
+  $('modeHelp').textContent=m
+    ?'Robot waits for the start module on J13: HIGH runs, LOW stops.'
+    :'J13 is ignored. Robot counts 5 s after boot or after you press the start button, then fights.';
+}
+document.querySelectorAll('#modeSeg button').forEach(b=>b.onclick=()=>send('MOD='+b.dataset.m));
+$('armBtn').onclick=()=>send('ARM'); $('stopBtn').onclick=()=>send('STOP');
+
+// gains
+document.querySelectorAll('.gain[data-k]').forEach(g=>{
+  const k=g.dataset.k, d=g.dataset;
+  g.innerHTML=`<div class="head"><span>${k[0]+k[1].toLowerCase()}</span><input type="number" min="${d.min}" max="${d.max}" step="${d.step}"></div><input type="range" min="${d.min}" max="${d.max}" step="${d.step}">`;
+  const [n,r]=g.querySelectorAll('input');
+  r.oninput=()=>n.value=r.value;
+  r.onchange=()=>send(k+'='+r.value);
+  n.onchange=()=>{ r.value=n.value; send(k+'='+n.value); };
+});
+function setGain(k,v){
+  const g=document.querySelector(`.gain[data-k="${k}"]`), [n,r]=g.querySelectorAll('input');
+  if(document.activeElement===n||document.activeElement===r) return;
+  n.value=+v; r.value=+v;
+}
+// threshold
+function setTh(v){ if(document.activeElement===$('th')||document.activeElement===$('thR')) return; $('th').value=v; $('thR').value=v; }
+$('thR').oninput=()=>$('th').value=$('thR').value;
+$('thR').onchange=()=>send('TH='+$('thR').value);
+$('th').onchange=()=>{ $('thR').value=$('th').value; send('TH='+$('th').value); };
+
+// charts
+function fit(c){ const r=devicePixelRatio||1, w=c.clientWidth, h=c.clientHeight; if(c.width!==w*r){ c.width=w*r; c.height=h*r; } const x=c.getContext('2d'); x.setTransform(r,0,0,r,0,0); x.clearRect(0,0,w,h); return [x,w,h]; }
+function drawLine(th){
+  const [x,w,h]=fit($('lineCv')), y=v=>h-4-(v/4095)*(h-8);
+  x.strokeStyle='#ffb84c'; x.setLineDash([4,4]); x.beginPath(); x.moveTo(0,y(th)); x.lineTo(w,y(th)); x.stroke(); x.setLineDash([]);
+  [[hist.L,'#4cc9f0'],[hist.R,'#3ddc84']].forEach(([a,c])=>{ x.strokeStyle=c; x.lineWidth=2; x.beginPath(); a.forEach((v,i)=>{ const px=i/(N-1)*w; i?x.lineTo(px,y(v)):x.moveTo(px,y(v)); }); x.stroke(); });
+}
+function drawStart(){
+  const [x,w,h]=fit($('startCv')), y=v=>v?6:h-6;
+  x.strokeStyle='#e9eef1'; x.lineWidth=2; x.beginPath();
+  hist.S.forEach((v,i)=>{ const px=i/(N-1)*w; if(i){ x.lineTo(px,y(hist.S[i-1])); } x.lineTo(px,y(v)); if(!i) x.moveTo(px,y(v)); });
+  x.stroke();
+}
+</script>
+</body>
+</html>
